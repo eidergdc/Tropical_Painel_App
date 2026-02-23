@@ -30,7 +30,18 @@ Acesse `http://localhost:5173`. Para fazer build para produção:
 npm run build
 ```
 
-Os arquivos gerados ficam em `dist/`. O `index.html` na raiz do repositório é o ponto de entrada do Vite; ao fazer build, use o conteúdo de `dist/` para publicar.
+Os arquivos gerados ficam em `dist/`.
+
+### Deploy (Firebase Hosting)
+
+O projeto tem `firebase.json` configurado para publicar a pasta **`dist/`**. Para ver as alterações no ar:
+
+1. Gere o build: `npm run build`
+2. Faça o deploy: `firebase deploy` (ou `firebase deploy --only hosting`)
+
+**Importante:** sempre rode `npm run build` antes de fazer o deploy. O deploy usa o conteúdo de `dist/`, não a pasta raiz. Se você fizer deploy sem rodar o build, o site continua com a versão antiga (ou quebra).
+
+Se usar Vercel/Netlify: configure o comando de build como `npm run build` e a pasta de saída como `dist`.
 
 ## Estrutura do Firebase
 
