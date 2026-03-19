@@ -4,6 +4,7 @@ import {
   collection,
   doc,
   setDoc,
+  getDoc,
   getDocs,
   addDoc,
   updateDoc,
@@ -16,6 +17,27 @@ import { updateServerAndPropagateToDevices, buildListUrl } from '../lib/updateSe
 
 const tabDevices = 'devices'
 const tabLists = 'lists'
+const tabSupport = 'support'
+
+const defaultSupportInfo = {
+  supportType: 'WhatsApp',
+  supportValue: '+1 (240) 432-5144',
+  supportLink: 'https://wa.me/12404325144',
+  supportMessage: 'Escaneie para falar com o suporte',
+  supportEmail: 'support@tropicalplaytv.com',
+  isActive: true,
+}
+
+function normalizeSupportInfo(data = {}) {
+  return {
+    supportType: data.supportType || defaultSupportInfo.supportType,
+    supportValue: data.supportValue || defaultSupportInfo.supportValue,
+    supportLink: data.supportLink || defaultSupportInfo.supportLink,
+    supportMessage: data.supportMessage || defaultSupportInfo.supportMessage,
+    supportEmail: data.supportEmail || defaultSupportInfo.supportEmail,
+    isActive: data.isActive ?? defaultSupportInfo.isActive,
+  }
+}
 
 function formatDate(timestamp) {
   if (!timestamp?.toDate) return '-'
@@ -51,11 +73,18 @@ export default function Dashboard() {
   })
   const [savingServer, setSavingServer] = useState(false)
 
+  // Support Info form (TV Support Settings)
+  const [supportForm, setSupportForm] = useState(defaultSupportInfo)
+  const [savedSupportInfo, setSavedSupportInfo] = useState(defaultSupportInfo)
+  const [loadingSupport, setLoadingSupport] = useState(true)
+  const [savingSupport, setSavingSupport] = useState(false)
+
   const user = auth.currentUser
 
   useEffect(() => {
     loadDevices()
     loadServers()
+    loadSupportInfo()
   }, [])
 
   async function loadDevices() {
@@ -82,6 +111,27 @@ export default function Dashboard() {
       setServers(snap.docs.map((d) => ({ id: d.id, ...d.data() })))
     } catch (e) {
       toast.error('Erro ao carregar servidores')
+    }
+  }
+
+  async function loadSupportInfo() {
+    setLoadingSupport(true)
+    try {
+      const supportRef = doc(db, 'app_settings', 'support_info')
+      const supportSnap = await getDoc(supportRef)
+
+      if (supportSnap.exists()) {
+        const normalized = normalizeSupportInfo(supportSnap.data())
+        setSupportForm(normalized)
+        setSavedSupportInfo(normalized)
+      } else {
+        setSupportForm(defaultSupportInfo)
+        setSavedSupportInfo(defaultSupportInfo)
+      }
+    } catch (e) {
+      toast.error('Erro ao carregar configurações de suporte')
+    } finally {
+      setLoadingSupport(false)
     }
   }
 
@@ -258,9 +308,45 @@ export default function Dashboard() {
     }
   }
 
+  async function saveSupportInfo(e) {
+    e.preventDefault()
+    setSavingSupport(true)
+    try {
+      const payload = {
+        supportType: String(supportForm.supportType || '').trim(),
+        supportValue: String(supportForm.supportValue || '').trim(),
+        supportLink: String(supportForm.supportLink || '').trim(),
+        supportMessage: String(supportForm.supportMessage || '').trim(),
+        supportEmail: String(supportForm.supportEmail || '').trim(),
+        isActive: !!supportForm.isActive,
+      }
+
+      await setDoc(
+        doc(db, 'app_settings', 'support_info'),
+        {
+          ...payload,
+          updatedAt: serverTimestamp(),
+        },
+        { merge: true }
+      )
+      setSupportForm(payload)
+      setSavedSupportInfo(payload)
+      toast.success('Informações de suporte salvas com sucesso')
+    } catch (err) {
+      console.error('Erro ao salvar suporte:', err)
+      toast.error('Não foi possível salvar as informações de suporte')
+    } finally {
+      setSavingSupport(false)
+    }
+  }
+
   function getServerName(serverId) {
     return servers.find((s) => s.id === serverId)?.name || 'Servidor não encontrado'
   }
+
+  const hasSupportChanges =
+    JSON.stringify(normalizeSupportInfo(supportForm)) !==
+    JSON.stringify(normalizeSupportInfo(savedSupportInfo))
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-orange-50/10 to-red-50/10">
@@ -305,6 +391,13 @@ export default function Dashboard() {
               onClick={() => setTab(tabLists)}
             >
               Configurações
+            </button>
+            <button
+              type="button"
+              className={`nav-tab ${tab === tabSupport ? 'nav-tab-active' : 'nav-tab-inactive'}`}
+              onClick={() => setTab(tabSupport)}
+            >
+              Support Info
             </button>
           </nav>
 
@@ -734,6 +827,190 @@ export default function Dashboard() {
                     </table>
                   </div>
                 </div>
+              </div>
+            )}
+
+            {tab === tabSupport && (
+              <div className="space-y-8">
+                <div className="glass-card mobile-card bg-gradient-to-r from-orange-50 to-red-50">
+                  <h2 className="mb-2 text-xl font-semibold text-gray-900">TV Support Settings</h2>
+                  <p className="mb-6 text-sm text-gray-600">
+                    Configuração principal de suporte exibida no aplicativo de TV.
+                  </p>
+
+                  {loadingSupport ? (
+                    <p className="text-sm text-gray-500">Carregando informações de suporte...</p>
+                  ) : (
+                    <form onSubmit={saveSupportInfo} className="space-y-6">
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          supportType
+                        </label>
+                        <select
+                          value={supportForm.supportType}
+                          onChange={(e) =>
+                            setSupportForm((f) => ({ ...f, supportType: e.target.value }))
+                          }
+                          className="input-field"
+                        >
+                          <option value="WhatsApp">WhatsApp</option>
+                          <option value="Telegram">Telegram</option>
+                          <option value="Email">Email</option>
+                          <option value="Outro">Outro</option>
+                        </select>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          supportValue
+                        </label>
+                        <input
+                          type="text"
+                          value={supportForm.supportValue}
+                          onChange={(e) =>
+                            setSupportForm((f) => ({ ...f, supportValue: e.target.value }))
+                          }
+                          className="input-field"
+                          placeholder="+1 (240) 432-5144"
+                          required
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          supportLink
+                        </label>
+                        <input
+                          type="text"
+                          value={supportForm.supportLink}
+                          onChange={(e) =>
+                            setSupportForm((f) => ({ ...f, supportLink: e.target.value }))
+                          }
+                          className="input-field"
+                          placeholder="https://wa.me/12404325144"
+                          required
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          supportMessage
+                        </label>
+                        <input
+                          type="text"
+                          value={supportForm.supportMessage}
+                          onChange={(e) =>
+                            setSupportForm((f) => ({ ...f, supportMessage: e.target.value }))
+                          }
+                          className="input-field"
+                          placeholder="Escaneie para falar com o suporte"
+                          required
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          supportEmail
+                        </label>
+                        <input
+                          type="email"
+                          value={supportForm.supportEmail}
+                          onChange={(e) =>
+                            setSupportForm((f) => ({ ...f, supportEmail: e.target.value }))
+                          }
+                          className="input-field"
+                          placeholder="support@tropicalplaytv.com"
+                          required
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white/60 p-4">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">isActive</p>
+                          <p className="text-xs text-gray-500">
+                            Ative para exibir as informações no app de TV.
+                          </p>
+                        </div>
+                        <label className="inline-flex cursor-pointer items-center">
+                          <input
+                            type="checkbox"
+                            checked={!!supportForm.isActive}
+                            onChange={(e) =>
+                              setSupportForm((f) => ({ ...f, isActive: e.target.checked }))
+                            }
+                            className="h-5 w-5 rounded border-gray-300 text-orange-600 focus:ring-orange-500"
+                          />
+                        </label>
+                      </div>
+
+                      <div className="flex justify-end">
+                        <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
+                          <span
+                            className={`text-xs ${
+                              hasSupportChanges ? 'text-orange-700' : 'text-green-700'
+                            }`}
+                          >
+                            {hasSupportChanges ? 'Existem alterações não salvas' : 'Sem alterações pendentes'}
+                          </span>
+                          <button
+                            type="submit"
+                            disabled={savingSupport}
+                            className="btn-primary w-full sm:w-auto"
+                          >
+                            {savingSupport ? 'Salvando...' : 'Save'}
+                          </button>
+                        </div>
+                      </div>
+                    </form>
+                  )}
+                </div>
+
+                {!loadingSupport && (
+                  <div className="glass-card mobile-card bg-white">
+                    <div className="mb-4 flex items-center justify-between">
+                      <h3 className="text-lg font-semibold text-gray-900">Preview salvo</h3>
+                      <span
+                        className={`rounded-full px-3 py-1 text-xs font-medium ${
+                          savedSupportInfo.isActive
+                            ? 'bg-green-100 text-green-700'
+                            : 'bg-gray-200 text-gray-700'
+                        }`}
+                      >
+                        {savedSupportInfo.isActive ? 'Ativo no app de TV' : 'Inativo no app de TV'}
+                      </span>
+                    </div>
+
+                    <div className="space-y-3 text-sm">
+                      <p>
+                        <span className="font-medium text-gray-700">supportType:</span>{' '}
+                        <span className="text-gray-900">{savedSupportInfo.supportType}</span>
+                      </p>
+                      <p>
+                        <span className="font-medium text-gray-700">supportValue:</span>{' '}
+                        <span className="text-gray-900">{savedSupportInfo.supportValue}</span>
+                      </p>
+                      <p>
+                        <span className="font-medium text-gray-700">supportLink:</span>{' '}
+                        <a
+                          href={savedSupportInfo.supportLink}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="break-all text-orange-600 hover:text-orange-700"
+                        >
+                          {savedSupportInfo.supportLink}
+                        </a>
+                      </p>
+                      <p>
+                        <span className="font-medium text-gray-700">supportMessage:</span>{' '}
+                        <span className="text-gray-900">{savedSupportInfo.supportMessage}</span>
+                      </p>
+                      <p>
+                        <span className="font-medium text-gray-700">supportEmail:</span>{' '}
+                        <span className="text-gray-900">{savedSupportInfo.supportEmail}</span>
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             )}
           </div>
