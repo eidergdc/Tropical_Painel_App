@@ -9,6 +9,7 @@ import {
   addDoc,
   updateDoc,
   deleteDoc,
+  Timestamp,
   serverTimestamp,
 } from 'firebase/firestore'
 import toast from 'react-hot-toast'
@@ -18,6 +19,16 @@ import { updateServerAndPropagateToDevices, buildListUrl } from '../lib/updateSe
 const tabDevices = 'devices'
 const tabLists = 'lists'
 const tabSupport = 'support'
+const defaultPlanDays = 30
+
+const planOptions = [
+  { value: 7, label: '7 dias (Semanal)' },
+  { value: 15, label: '15 dias (Quinzenal)' },
+  { value: 30, label: '30 dias (Mensal)' },
+  { value: 90, label: '90 dias (Trimestral)' },
+  { value: 180, label: '180 dias (Semestral)' },
+  { value: 365, label: '365 dias (Anual)' },
+]
 
 const defaultSupportInfo = {
   supportType: 'WhatsApp',
@@ -48,6 +59,31 @@ function formatDate(timestamp) {
   })
 }
 
+function timestampToInputDate(timestamp) {
+  if (!timestamp?.toDate) return ''
+  const date = timestamp.toDate()
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
+function inputDateToTimestamp(value) {
+  if (!value) return null
+  const parsed = new Date(`${value}T00:00:00`)
+  if (Number.isNaN(parsed.getTime())) return null
+  return Timestamp.fromDate(parsed)
+}
+
+function getExpiryDateByPlanDays(planDays) {
+  const days = Number(planDays)
+  if (!Number.isFinite(days) || days <= 0) return null
+  const date = new Date()
+  date.setHours(0, 0, 0, 0)
+  date.setDate(date.getDate() + days)
+  return date
+}
+
 export default function Dashboard() {
   const [tab, setTab] = useState(tabDevices)
   const [devices, setDevices] = useState([])
@@ -61,6 +97,9 @@ export default function Dashboard() {
     userNumber: '',
     paymentStatus: false,
     lists: [],
+    createdAt: '',
+    expiresAt: '',
+    planDays: String(defaultPlanDays),
   })
   const [savingDevice, setSavingDevice] = useState(false)
 
@@ -154,6 +193,9 @@ export default function Dashboard() {
       userNumber: device.userNumber || '',
       paymentStatus: device.paymentStatus ?? false,
       lists: (device.lists || []).map((l) => ({ ...l })),
+      createdAt: timestampToInputDate(device.createdAt),
+      expiresAt: timestampToInputDate(device.expiresAt),
+      planDays: String(device.planDays || defaultPlanDays),
     })
   }
 
@@ -163,6 +205,9 @@ export default function Dashboard() {
       userNumber: '',
       paymentStatus: false,
       lists: [],
+      createdAt: '',
+      expiresAt: '',
+      planDays: String(defaultPlanDays),
     })
   }
 
@@ -197,17 +242,29 @@ export default function Dashboard() {
       }
 
       if (editingDevice) {
+        const createdAt = inputDateToTimestamp(deviceForm.createdAt)
+        const expiresAt = inputDateToTimestamp(deviceForm.expiresAt)
+        if (createdAt) payload.createdAt = createdAt
+        if (expiresAt) payload.expiresAt = expiresAt
         await updateDoc(doc(db, 'devices', editingDevice.id), payload)
         toast.success('Dispositivo atualizado')
       } else {
         const userNumber = String(deviceForm.userNumber || '').trim()
+        const planDays = Number(deviceForm.planDays || defaultPlanDays)
+        const expiresAtDate = getExpiryDateByPlanDays(planDays)
         if (!userNumber) {
           toast.error('Informe o número do usuário.')
           setSavingDevice(false)
           return
         }
+        if (!expiresAtDate) {
+          toast.error('Selecione um plano válido.')
+          setSavingDevice(false)
+          return
+        }
         payload.createdAt = serverTimestamp()
-        payload.expiresAt = serverTimestamp()
+        payload.expiresAt = Timestamp.fromDate(expiresAtDate)
+        payload.planDays = planDays
         await setDoc(doc(db, 'devices', userNumber), payload)
         toast.success('Dispositivo adicionado')
       }
@@ -347,6 +404,7 @@ export default function Dashboard() {
   const hasSupportChanges =
     JSON.stringify(normalizeSupportInfo(supportForm)) !==
     JSON.stringify(normalizeSupportInfo(savedSupportInfo))
+  const planExpiryPreview = getExpiryDateByPlanDays(deviceForm.planDays)
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-orange-50/10 to-red-50/10">
@@ -426,6 +484,34 @@ export default function Dashboard() {
                         />
                       </div>
                     )}
+                    {!editingDevice && (
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          Plano
+                        </label>
+                        <select
+                          value={deviceForm.planDays}
+                          onChange={(e) =>
+                            setDeviceForm((f) => ({ ...f, planDays: e.target.value }))
+                          }
+                          className="input-field"
+                        >
+                          {planOptions.map((plan) => (
+                            <option key={plan.value} value={String(plan.value)}>
+                              {plan.label}
+                            </option>
+                          ))}
+                        </select>
+                        <p className="mt-2 text-xs text-gray-500">
+                          Vencimento previsto:{' '}
+                          <span className="font-medium text-gray-700">
+                            {planExpiryPreview
+                              ? planExpiryPreview.toLocaleDateString('pt-BR')
+                              : '-'}
+                          </span>
+                        </p>
+                      </div>
+                    )}
                     <div>
                       <label className="mb-1 block text-sm font-medium text-gray-700">
                         Status do Pagamento
@@ -444,6 +530,36 @@ export default function Dashboard() {
                         <option value="true">Pago</option>
                       </select>
                     </div>
+                    {editingDevice && (
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-gray-700">
+                            Data de criação
+                          </label>
+                          <input
+                            type="date"
+                            value={deviceForm.createdAt || ''}
+                            onChange={(e) =>
+                              setDeviceForm((f) => ({ ...f, createdAt: e.target.value }))
+                            }
+                            className="input-field"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-gray-700">
+                            Data de vencimento
+                          </label>
+                          <input
+                            type="date"
+                            value={deviceForm.expiresAt || ''}
+                            onChange={(e) =>
+                              setDeviceForm((f) => ({ ...f, expiresAt: e.target.value }))
+                            }
+                            className="input-field"
+                          />
+                        </div>
+                      </div>
+                    )}
                     <div className="space-y-4">
                       <h3 className="text-lg font-medium text-gray-900">Listas M3U</h3>
                       <p className="text-sm text-gray-500">
