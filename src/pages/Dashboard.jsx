@@ -19,6 +19,7 @@ import { updateServerAndPropagateToDevices, buildListUrl } from '../lib/updateSe
 const tabDevices = 'devices'
 const tabLists = 'lists'
 const tabSupport = 'support'
+const tabAppUpdate = 'app_update'
 const defaultPlanDays = 30
 
 const planOptions = [
@@ -39,6 +40,14 @@ const defaultSupportInfo = {
   isActive: true,
 }
 
+const defaultAppConfig = {
+  latest_version: '1.0.2',
+  version_code: '2',
+  force_update: false,
+  update_message: 'Nova versão disponível com melhorias',
+  update_url: 'https://seusite.com/app.apk',
+}
+
 function normalizeSupportInfo(data = {}) {
   return {
     supportType: data.supportType || defaultSupportInfo.supportType,
@@ -47,6 +56,19 @@ function normalizeSupportInfo(data = {}) {
     supportMessage: data.supportMessage || defaultSupportInfo.supportMessage,
     supportEmail: data.supportEmail || defaultSupportInfo.supportEmail,
     isActive: data.isActive ?? defaultSupportInfo.isActive,
+  }
+}
+
+function normalizeAppConfig(data = {}) {
+  const parsedVersionCode = Number(data.version_code)
+  return {
+    latest_version: String(data.latest_version || defaultAppConfig.latest_version),
+    version_code: Number.isFinite(parsedVersionCode) && parsedVersionCode > 0
+      ? String(parsedVersionCode)
+      : defaultAppConfig.version_code,
+    force_update: !!data.force_update,
+    update_message: String(data.update_message || defaultAppConfig.update_message),
+    update_url: String(data.update_url || defaultAppConfig.update_url),
   }
 }
 
@@ -118,12 +140,19 @@ export default function Dashboard() {
   const [loadingSupport, setLoadingSupport] = useState(true)
   const [savingSupport, setSavingSupport] = useState(false)
 
+  // App version control form
+  const [appConfigForm, setAppConfigForm] = useState(defaultAppConfig)
+  const [savedAppConfig, setSavedAppConfig] = useState(defaultAppConfig)
+  const [loadingAppConfig, setLoadingAppConfig] = useState(true)
+  const [savingAppConfig, setSavingAppConfig] = useState(false)
+
   const user = auth.currentUser
 
   useEffect(() => {
     loadDevices()
     loadServers()
     loadSupportInfo()
+    loadAppConfig()
   }, [])
 
   async function loadDevices() {
@@ -171,6 +200,27 @@ export default function Dashboard() {
       toast.error('Erro ao carregar configurações de suporte')
     } finally {
       setLoadingSupport(false)
+    }
+  }
+
+  async function loadAppConfig() {
+    setLoadingAppConfig(true)
+    try {
+      const appConfigRef = doc(db, 'app_settings', 'app_config')
+      const appConfigSnap = await getDoc(appConfigRef)
+
+      if (appConfigSnap.exists()) {
+        const normalized = normalizeAppConfig(appConfigSnap.data())
+        setAppConfigForm(normalized)
+        setSavedAppConfig(normalized)
+      } else {
+        setAppConfigForm(defaultAppConfig)
+        setSavedAppConfig(defaultAppConfig)
+      }
+    } catch (e) {
+      toast.error('Erro ao carregar configuração de versão')
+    } finally {
+      setLoadingAppConfig(false)
     }
   }
 
@@ -397,6 +447,48 @@ export default function Dashboard() {
     }
   }
 
+  async function saveAppConfig(e) {
+    e.preventDefault()
+    setSavingAppConfig(true)
+    try {
+      const versionCode = Number(appConfigForm.version_code)
+      const updateUrl = String(appConfigForm.update_url || '').trim()
+
+      if (!Number.isFinite(versionCode) || versionCode <= 0) {
+        toast.error('Código da versão deve ser um número válido.')
+        setSavingAppConfig(false)
+        return
+      }
+
+      if (!updateUrl) {
+        toast.error('URL de atualização é obrigatória.')
+        setSavingAppConfig(false)
+        return
+      }
+
+      const payload = {
+        latest_version: String(appConfigForm.latest_version || '').trim(),
+        version_code: versionCode,
+        force_update: !!appConfigForm.force_update,
+        update_message: String(appConfigForm.update_message || '').trim(),
+        update_url: updateUrl,
+        updatedAt: serverTimestamp(),
+      }
+
+      await setDoc(doc(db, 'app_settings', 'app_config'), payload, { merge: true })
+
+      const normalized = normalizeAppConfig(payload)
+      setAppConfigForm(normalized)
+      setSavedAppConfig(normalized)
+      toast.success('Configuração de atualização salva com sucesso')
+    } catch (err) {
+      console.error('Erro ao salvar configuração de atualização:', err)
+      toast.error('Não foi possível salvar a configuração de atualização')
+    } finally {
+      setSavingAppConfig(false)
+    }
+  }
+
   function getServerName(serverId) {
     return servers.find((s) => s.id === serverId)?.name || 'Servidor não encontrado'
   }
@@ -404,6 +496,9 @@ export default function Dashboard() {
   const hasSupportChanges =
     JSON.stringify(normalizeSupportInfo(supportForm)) !==
     JSON.stringify(normalizeSupportInfo(savedSupportInfo))
+  const hasAppConfigChanges =
+    JSON.stringify(normalizeAppConfig(appConfigForm)) !==
+    JSON.stringify(normalizeAppConfig(savedAppConfig))
   const planExpiryPreview = getExpiryDateByPlanDays(deviceForm.planDays)
 
   return (
@@ -456,6 +551,13 @@ export default function Dashboard() {
               onClick={() => setTab(tabSupport)}
             >
               Support Info
+            </button>
+            <button
+              type="button"
+              className={`nav-tab ${tab === tabAppUpdate ? 'nav-tab-active' : 'nav-tab-inactive'}`}
+              onClick={() => setTab(tabAppUpdate)}
+            >
+              Atualização do Aplicativo
             </button>
           </nav>
 
@@ -1123,6 +1225,164 @@ export default function Dashboard() {
                       <p>
                         <span className="font-medium text-gray-700">supportEmail:</span>{' '}
                         <span className="text-gray-900">{savedSupportInfo.supportEmail}</span>
+                      </p>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+
+            {tab === tabAppUpdate && (
+              <div className="space-y-8">
+                <div className="glass-card mobile-card bg-gradient-to-r from-orange-50 to-red-50">
+                  <h2 className="mb-2 text-xl font-semibold text-gray-900">
+                    Atualização do Aplicativo
+                  </h2>
+                  <p className="mb-6 text-sm text-gray-600">
+                    Controle da versão mais recente, obrigatoriedade, mensagem e link do APK.
+                  </p>
+
+                  {loadingAppConfig ? (
+                    <p className="text-sm text-gray-500">Carregando configuração de atualização...</p>
+                  ) : (
+                    <form onSubmit={saveAppConfig} className="space-y-6">
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          Última versão
+                        </label>
+                        <input
+                          type="text"
+                          value={appConfigForm.latest_version}
+                          onChange={(e) =>
+                            setAppConfigForm((f) => ({ ...f, latest_version: e.target.value }))
+                          }
+                          className="input-field"
+                          placeholder="1.0.2"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          Código da versão
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={appConfigForm.version_code}
+                          onChange={(e) =>
+                            setAppConfigForm((f) => ({ ...f, version_code: e.target.value }))
+                          }
+                          className="input-field"
+                          placeholder="2"
+                          required
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white/60 p-4">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">Atualização obrigatória</p>
+                          <p className="text-xs text-gray-500">
+                            Marque para indicar que o app deve exigir a atualização.
+                          </p>
+                        </div>
+                        <label className="inline-flex cursor-pointer items-center">
+                          <input
+                            type="checkbox"
+                            checked={!!appConfigForm.force_update}
+                            onChange={(e) =>
+                              setAppConfigForm((f) => ({ ...f, force_update: e.target.checked }))
+                            }
+                            className="h-5 w-5 rounded border-gray-300 text-orange-600 focus:ring-orange-500"
+                          />
+                        </label>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          Mensagem de atualização
+                        </label>
+                        <input
+                          type="text"
+                          value={appConfigForm.update_message}
+                          onChange={(e) =>
+                            setAppConfigForm((f) => ({ ...f, update_message: e.target.value }))
+                          }
+                          className="input-field"
+                          placeholder="Nova versão disponível com melhorias"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          URL de atualização
+                        </label>
+                        <input
+                          type="text"
+                          value={appConfigForm.update_url}
+                          onChange={(e) =>
+                            setAppConfigForm((f) => ({ ...f, update_url: e.target.value }))
+                          }
+                          className="input-field"
+                          placeholder="https://seusite.com/app.apk"
+                          required
+                        />
+                      </div>
+
+                      <div className="flex justify-end">
+                        <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
+                          <span
+                            className={`text-xs ${
+                              hasAppConfigChanges ? 'text-orange-700' : 'text-green-700'
+                            }`}
+                          >
+                            {hasAppConfigChanges ? 'Existem alterações não salvas' : 'Sem alterações pendentes'}
+                          </span>
+                          <button
+                            type="submit"
+                            disabled={savingAppConfig}
+                            className="btn-primary w-full sm:w-auto"
+                          >
+                            {savingAppConfig ? 'Salvando...' : 'Save'}
+                          </button>
+                        </div>
+                      </div>
+                    </form>
+                  )}
+                </div>
+
+                {!loadingAppConfig && (
+                  <div className="glass-card mobile-card bg-white">
+                    <h3 className="mb-4 text-lg font-semibold text-gray-900">Dados salvos (app_config)</h3>
+                    <div className="space-y-3 text-sm">
+                      <p>
+                        <span className="font-medium text-gray-700">latest_version:</span>{' '}
+                        <span className="text-gray-900">{savedAppConfig.latest_version}</span>
+                      </p>
+                      <p>
+                        <span className="font-medium text-gray-700">version_code:</span>{' '}
+                        <span className="text-gray-900">{savedAppConfig.version_code}</span>
+                      </p>
+                      <p>
+                        <span className="font-medium text-gray-700">force_update:</span>{' '}
+                        <span className="text-gray-900">
+                          {savedAppConfig.force_update ? 'true' : 'false'}
+                        </span>
+                      </p>
+                      <p>
+                        <span className="font-medium text-gray-700">update_message:</span>{' '}
+                        <span className="text-gray-900">{savedAppConfig.update_message}</span>
+                      </p>
+                      <p>
+                        <span className="font-medium text-gray-700">update_url:</span>{' '}
+                        <a
+                          href={savedAppConfig.update_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="break-all text-orange-600 hover:text-orange-700"
+                        >
+                          {savedAppConfig.update_url}
+                        </a>
                       </p>
                     </div>
                   </div>
