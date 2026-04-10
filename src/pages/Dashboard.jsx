@@ -41,11 +41,11 @@ const defaultSupportInfo = {
 }
 
 const defaultAppConfig = {
-  latest_version: '1.0.2',
-  version_code: '2',
+  latest_version: '1.0.3',
+  version_code: '3',
   force_update: false,
   update_message: 'Nova versão disponível com melhorias',
-  update_url: 'https://seusite.com/app.apk',
+  downloader_code: '8345921',
 }
 
 function normalizeSupportInfo(data = {}) {
@@ -68,7 +68,7 @@ function normalizeAppConfig(data = {}) {
       : defaultAppConfig.version_code,
     force_update: !!data.force_update,
     update_message: String(data.update_message || defaultAppConfig.update_message),
-    update_url: String(data.update_url || defaultAppConfig.update_url),
+    downloader_code: String(data.downloader_code || defaultAppConfig.downloader_code),
   }
 }
 
@@ -452,7 +452,7 @@ export default function Dashboard() {
     setSavingAppConfig(true)
     try {
       const versionCode = Number(appConfigForm.version_code)
-      const updateUrl = String(appConfigForm.update_url || '').trim()
+      const downloaderCode = String(appConfigForm.downloader_code || '').trim()
 
       if (!Number.isFinite(versionCode) || versionCode <= 0) {
         toast.error('Código da versão deve ser um número válido.')
@@ -460,8 +460,8 @@ export default function Dashboard() {
         return
       }
 
-      if (!updateUrl) {
-        toast.error('URL de atualização é obrigatória.')
+      if (!downloaderCode) {
+        toast.error('Código do Downloader é obrigatório.')
         setSavingAppConfig(false)
         return
       }
@@ -471,7 +471,7 @@ export default function Dashboard() {
         version_code: versionCode,
         force_update: !!appConfigForm.force_update,
         update_message: String(appConfigForm.update_message || '').trim(),
-        update_url: updateUrl,
+        downloader_code: downloaderCode,
         updatedAt: serverTimestamp(),
       }
 
@@ -1239,7 +1239,7 @@ export default function Dashboard() {
                     Atualização do Aplicativo
                   </h2>
                   <p className="mb-6 text-sm text-gray-600">
-                    Controle da versão mais recente, obrigatoriedade, mensagem e link do APK.
+                    Controle da versão mais recente, obrigatoriedade, mensagem e código do Downloader.
                   </p>
 
                   {loadingAppConfig ? (
@@ -1315,16 +1315,16 @@ export default function Dashboard() {
 
                       <div>
                         <label className="mb-1 block text-sm font-medium text-gray-700">
-                          URL de atualização
+                          Código do Downloader
                         </label>
                         <input
                           type="text"
-                          value={appConfigForm.update_url}
+                          value={appConfigForm.downloader_code}
                           onChange={(e) =>
-                            setAppConfigForm((f) => ({ ...f, update_url: e.target.value }))
+                            setAppConfigForm((f) => ({ ...f, downloader_code: e.target.value }))
                           }
                           className="input-field"
-                          placeholder="https://seusite.com/app.apk"
+                          placeholder="8345921"
                           required
                         />
                       </div>
@@ -1374,15 +1374,8 @@ export default function Dashboard() {
                         <span className="text-gray-900">{savedAppConfig.update_message}</span>
                       </p>
                       <p>
-                        <span className="font-medium text-gray-700">update_url:</span>{' '}
-                        <a
-                          href={savedAppConfig.update_url}
-                          target="_blank"
-                          rel="noopener noreferrer"
-                          className="break-all text-orange-600 hover:text-orange-700"
-                        >
-                          {savedAppConfig.update_url}
-                        </a>
+                        <span className="font-medium text-gray-700">downloader_code:</span>{' '}
+                        <span className="text-gray-900">{savedAppConfig.downloader_code}</span>
                       </p>
                     </div>
                   </div>
