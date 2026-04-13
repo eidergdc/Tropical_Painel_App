@@ -48,6 +48,14 @@ const defaultAppConfig = {
   downloader_code: '8345921',
 }
 
+const defaultAndroidAppConfig = {
+  latest_version: '1.0.3',
+  version_code: '3',
+  force_update: false,
+  update_message: 'Nova versão Android disponível com melhorias',
+  update_url: 'https://seusite.com/app.apk',
+}
+
 function normalizeSupportInfo(data = {}) {
   return {
     supportType: data.supportType || defaultSupportInfo.supportType,
@@ -69,6 +77,21 @@ function normalizeAppConfig(data = {}) {
     force_update: !!data.force_update,
     update_message: String(data.update_message || defaultAppConfig.update_message),
     downloader_code: String(data.downloader_code || defaultAppConfig.downloader_code),
+  }
+}
+
+function normalizeAndroidAppConfig(data = {}) {
+  const parsedVersionCode = Number(data.android_version_code)
+  return {
+    latest_version: String(data.android_latest_version || defaultAndroidAppConfig.latest_version),
+    version_code: Number.isFinite(parsedVersionCode) && parsedVersionCode > 0
+      ? String(parsedVersionCode)
+      : defaultAndroidAppConfig.version_code,
+    force_update: !!data.android_force_update,
+    update_message: String(
+      data.android_update_message || defaultAndroidAppConfig.update_message
+    ),
+    update_url: String(data.android_update_url || defaultAndroidAppConfig.update_url),
   }
 }
 
@@ -143,8 +166,11 @@ export default function Dashboard() {
   // App version control form
   const [appConfigForm, setAppConfigForm] = useState(defaultAppConfig)
   const [savedAppConfig, setSavedAppConfig] = useState(defaultAppConfig)
+  const [androidAppConfigForm, setAndroidAppConfigForm] = useState(defaultAndroidAppConfig)
+  const [savedAndroidAppConfig, setSavedAndroidAppConfig] = useState(defaultAndroidAppConfig)
   const [loadingAppConfig, setLoadingAppConfig] = useState(true)
   const [savingAppConfig, setSavingAppConfig] = useState(false)
+  const [savingAndroidAppConfig, setSavingAndroidAppConfig] = useState(false)
 
   const user = auth.currentUser
 
@@ -210,12 +236,18 @@ export default function Dashboard() {
       const appConfigSnap = await getDoc(appConfigRef)
 
       if (appConfigSnap.exists()) {
-        const normalized = normalizeAppConfig(appConfigSnap.data())
+        const data = appConfigSnap.data()
+        const normalized = normalizeAppConfig(data)
+        const normalizedAndroid = normalizeAndroidAppConfig(data)
         setAppConfigForm(normalized)
         setSavedAppConfig(normalized)
+        setAndroidAppConfigForm(normalizedAndroid)
+        setSavedAndroidAppConfig(normalizedAndroid)
       } else {
         setAppConfigForm(defaultAppConfig)
         setSavedAppConfig(defaultAppConfig)
+        setAndroidAppConfigForm(defaultAndroidAppConfig)
+        setSavedAndroidAppConfig(defaultAndroidAppConfig)
       }
     } catch (e) {
       toast.error('Erro ao carregar configuração de versão')
@@ -489,6 +521,48 @@ export default function Dashboard() {
     }
   }
 
+  async function saveAndroidAppConfig(e) {
+    e.preventDefault()
+    setSavingAndroidAppConfig(true)
+    try {
+      const versionCode = Number(androidAppConfigForm.version_code)
+      const updateUrl = String(androidAppConfigForm.update_url || '').trim()
+
+      if (!Number.isFinite(versionCode) || versionCode <= 0) {
+        toast.error('Código da versão Android deve ser um número válido.')
+        setSavingAndroidAppConfig(false)
+        return
+      }
+
+      if (!updateUrl) {
+        toast.error('Link de atualização Android é obrigatório.')
+        setSavingAndroidAppConfig(false)
+        return
+      }
+
+      const payload = {
+        android_latest_version: String(androidAppConfigForm.latest_version || '').trim(),
+        android_version_code: versionCode,
+        android_force_update: !!androidAppConfigForm.force_update,
+        android_update_message: String(androidAppConfigForm.update_message || '').trim(),
+        android_update_url: updateUrl,
+        android_updatedAt: serverTimestamp(),
+      }
+
+      await setDoc(doc(db, 'app_settings', 'app_config'), payload, { merge: true })
+
+      const normalized = normalizeAndroidAppConfig(payload)
+      setAndroidAppConfigForm(normalized)
+      setSavedAndroidAppConfig(normalized)
+      toast.success('Configuração de atualização Android salva com sucesso')
+    } catch (err) {
+      console.error('Erro ao salvar configuração Android:', err)
+      toast.error('Não foi possível salvar a configuração Android')
+    } finally {
+      setSavingAndroidAppConfig(false)
+    }
+  }
+
   function getServerName(serverId) {
     return servers.find((s) => s.id === serverId)?.name || 'Servidor não encontrado'
   }
@@ -499,6 +573,9 @@ export default function Dashboard() {
   const hasAppConfigChanges =
     JSON.stringify(normalizeAppConfig(appConfigForm)) !==
     JSON.stringify(normalizeAppConfig(savedAppConfig))
+  const hasAndroidAppConfigChanges =
+    JSON.stringify(normalizeAndroidAppConfig(androidAppConfigForm)) !==
+    JSON.stringify(normalizeAndroidAppConfig(savedAndroidAppConfig))
   const planExpiryPreview = getExpiryDateByPlanDays(deviceForm.planDays)
 
   return (
@@ -1236,7 +1313,7 @@ export default function Dashboard() {
               <div className="space-y-8">
                 <div className="glass-card mobile-card bg-gradient-to-r from-orange-50 to-red-50">
                   <h2 className="mb-2 text-xl font-semibold text-gray-900">
-                    Atualização do Aplicativo
+                    Atualização do Aplicativo - Fire TV
                   </h2>
                   <p className="mb-6 text-sm text-gray-600">
                     Controle da versão mais recente, obrigatoriedade, mensagem e código do Downloader.
@@ -1353,7 +1430,9 @@ export default function Dashboard() {
 
                 {!loadingAppConfig && (
                   <div className="glass-card mobile-card bg-white">
-                    <h3 className="mb-4 text-lg font-semibold text-gray-900">Dados salvos (app_config)</h3>
+                    <h3 className="mb-4 text-lg font-semibold text-gray-900">
+                      Dados salvos Fire TV (app_config)
+                    </h3>
                     <div className="space-y-3 text-sm">
                       <p>
                         <span className="font-medium text-gray-700">latest_version:</span>{' '}
@@ -1376,6 +1455,181 @@ export default function Dashboard() {
                       <p>
                         <span className="font-medium text-gray-700">downloader_code:</span>{' '}
                         <span className="text-gray-900">{savedAppConfig.downloader_code}</span>
+                      </p>
+                    </div>
+                  </div>
+                )}
+
+                <div className="glass-card mobile-card bg-gradient-to-r from-orange-50 to-red-50">
+                  <h2 className="mb-2 text-xl font-semibold text-gray-900">
+                    Atualização do Aplicativo - Android Celular
+                  </h2>
+                  <p className="mb-6 text-sm text-gray-600">
+                    Controle da versão Android com link direto para download da atualização.
+                  </p>
+
+                  {loadingAppConfig ? (
+                    <p className="text-sm text-gray-500">Carregando configuração Android...</p>
+                  ) : (
+                    <form onSubmit={saveAndroidAppConfig} className="space-y-6">
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          Última versão (Android)
+                        </label>
+                        <input
+                          type="text"
+                          value={androidAppConfigForm.latest_version}
+                          onChange={(e) =>
+                            setAndroidAppConfigForm((f) => ({
+                              ...f,
+                              latest_version: e.target.value,
+                            }))
+                          }
+                          className="input-field"
+                          placeholder="1.0.3"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          Código da versão (Android)
+                        </label>
+                        <input
+                          type="number"
+                          min="1"
+                          step="1"
+                          value={androidAppConfigForm.version_code}
+                          onChange={(e) =>
+                            setAndroidAppConfigForm((f) => ({
+                              ...f,
+                              version_code: e.target.value,
+                            }))
+                          }
+                          className="input-field"
+                          placeholder="3"
+                          required
+                        />
+                      </div>
+
+                      <div className="flex items-center justify-between rounded-lg border border-gray-200 bg-white/60 p-4">
+                        <div>
+                          <p className="text-sm font-medium text-gray-900">
+                            Atualização obrigatória (Android)
+                          </p>
+                          <p className="text-xs text-gray-500">
+                            Marque para exigir atualização no app Android.
+                          </p>
+                        </div>
+                        <label className="inline-flex cursor-pointer items-center">
+                          <input
+                            type="checkbox"
+                            checked={!!androidAppConfigForm.force_update}
+                            onChange={(e) =>
+                              setAndroidAppConfigForm((f) => ({
+                                ...f,
+                                force_update: e.target.checked,
+                              }))
+                            }
+                            className="h-5 w-5 rounded border-gray-300 text-orange-600 focus:ring-orange-500"
+                          />
+                        </label>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          Mensagem de atualização (Android)
+                        </label>
+                        <input
+                          type="text"
+                          value={androidAppConfigForm.update_message}
+                          onChange={(e) =>
+                            setAndroidAppConfigForm((f) => ({
+                              ...f,
+                              update_message: e.target.value,
+                            }))
+                          }
+                          className="input-field"
+                          placeholder="Nova versão Android disponível com melhorias"
+                        />
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          Link de atualização (Android)
+                        </label>
+                        <input
+                          type="text"
+                          value={androidAppConfigForm.update_url}
+                          onChange={(e) =>
+                            setAndroidAppConfigForm((f) => ({
+                              ...f,
+                              update_url: e.target.value,
+                            }))
+                          }
+                          className="input-field"
+                          placeholder="https://seusite.com/app.apk"
+                          required
+                        />
+                      </div>
+
+                      <div className="flex justify-end">
+                        <div className="flex w-full flex-col gap-2 sm:w-auto sm:items-end">
+                          <span
+                            className={`text-xs ${
+                              hasAndroidAppConfigChanges ? 'text-orange-700' : 'text-green-700'
+                            }`}
+                          >
+                            {hasAndroidAppConfigChanges
+                              ? 'Existem alterações Android não salvas'
+                              : 'Sem alterações Android pendentes'}
+                          </span>
+                          <button
+                            type="submit"
+                            disabled={savingAndroidAppConfig}
+                            className="btn-primary w-full sm:w-auto"
+                          >
+                            {savingAndroidAppConfig ? 'Salvando...' : 'Save Android'}
+                          </button>
+                        </div>
+                      </div>
+                    </form>
+                  )}
+                </div>
+
+                {!loadingAppConfig && (
+                  <div className="glass-card mobile-card bg-white">
+                    <h3 className="mb-4 text-lg font-semibold text-gray-900">
+                      Dados salvos Android (app_config)
+                    </h3>
+                    <div className="space-y-3 text-sm">
+                      <p>
+                        <span className="font-medium text-gray-700">android_latest_version:</span>{' '}
+                        <span className="text-gray-900">{savedAndroidAppConfig.latest_version}</span>
+                      </p>
+                      <p>
+                        <span className="font-medium text-gray-700">android_version_code:</span>{' '}
+                        <span className="text-gray-900">{savedAndroidAppConfig.version_code}</span>
+                      </p>
+                      <p>
+                        <span className="font-medium text-gray-700">android_force_update:</span>{' '}
+                        <span className="text-gray-900">
+                          {savedAndroidAppConfig.force_update ? 'true' : 'false'}
+                        </span>
+                      </p>
+                      <p>
+                        <span className="font-medium text-gray-700">android_update_message:</span>{' '}
+                        <span className="text-gray-900">{savedAndroidAppConfig.update_message}</span>
+                      </p>
+                      <p>
+                        <span className="font-medium text-gray-700">android_update_url:</span>{' '}
+                        <a
+                          href={savedAndroidAppConfig.update_url}
+                          target="_blank"
+                          rel="noopener noreferrer"
+                          className="break-all text-orange-600 hover:text-orange-700"
+                        >
+                          {savedAndroidAppConfig.update_url}
+                        </a>
                       </p>
                     </div>
                   </div>
