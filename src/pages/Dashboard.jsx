@@ -20,7 +20,7 @@ const tabDevices = 'devices'
 const tabLists = 'lists'
 const tabSupport = 'support'
 const tabAppUpdate = 'app_update'
-const defaultPlanDays = 30
+const defaultPlanDays = 7
 
 const planOptions = [
   { value: 7, label: '7 dias (Semanal)' },
@@ -120,6 +120,13 @@ function inputDateToTimestamp(value) {
   return Timestamp.fromDate(parsed)
 }
 
+function dateToInputDate(date) {
+  const year = date.getFullYear()
+  const month = String(date.getMonth() + 1).padStart(2, '0')
+  const day = String(date.getDate()).padStart(2, '0')
+  return `${year}-${month}-${day}`
+}
+
 function getExpiryDateByPlanDays(planDays) {
   const days = Number(planDays)
   if (!Number.isFinite(days) || days <= 0) return null
@@ -127,6 +134,69 @@ function getExpiryDateByPlanDays(planDays) {
   date.setHours(0, 0, 0, 0)
   date.setDate(date.getDate() + days)
   return date
+}
+
+function addPlanDaysToExpiryDate(currentExpiresAtInput, planDays) {
+  const days = Number(planDays)
+  if (!Number.isFinite(days) || days <= 0) return null
+
+  const today = new Date()
+  today.setHours(0, 0, 0, 0)
+
+  let base
+  if (currentExpiresAtInput) {
+    base = new Date(`${currentExpiresAtInput}T00:00:00`)
+    if (Number.isNaN(base.getTime())) return null
+    base.setHours(0, 0, 0, 0)
+  } else {
+    base = new Date(today)
+  }
+
+  // Se já venceu, renova a partir de hoje; senão soma a partir da data de vencimento atual
+  if (base < today) base = new Date(today)
+
+  base.setDate(base.getDate() + days)
+  return base
+}
+
+const defaultServerNames = [
+  'Tropical Play TV 1',
+  'Tropical Play TV 2',
+  'Tropical Play TV 3',
+]
+
+function getDefaultServers(serverList) {
+  const preferred = defaultServerNames
+    .map((name) => serverList.find((s) => s.name === name))
+    .filter(Boolean)
+  if (preferred.length > 0) return preferred
+  return [...serverList].slice(0, 3)
+}
+
+function buildListsFromServers(serverList, userNumber, password) {
+  return serverList.map((server) => ({
+    serverId: server.id,
+    name: server.name || '',
+    username: userNumber || '',
+    password: password || '',
+  }))
+}
+
+function buildDefaultListsFromServers(serverList, userNumber, password) {
+  return buildListsFromServers(getDefaultServers(serverList), userNumber, password)
+}
+
+function syncNewDeviceListCredentials(form, userNumber, password) {
+  return {
+    ...form,
+    userNumber,
+    password,
+    lists: (form.lists || []).map((list) => ({
+      ...list,
+      username: userNumber,
+      password,
+    })),
+  }
 }
 
 export default function Dashboard() {
@@ -140,6 +210,7 @@ export default function Dashboard() {
   const [editingDevice, setEditingDevice] = useState(null)
   const [deviceForm, setDeviceForm] = useState({
     userNumber: '',
+    password: '',
     paymentStatus: false,
     lists: [],
     createdAt: '',
@@ -180,6 +251,17 @@ export default function Dashboard() {
     loadSupportInfo()
     loadAppConfig()
   }, [])
+
+  useEffect(() => {
+    if (editingDevice || servers.length === 0) return
+    setDeviceForm((f) => {
+      if ((f.lists || []).length > 0) return f
+      return {
+        ...f,
+        lists: buildDefaultListsFromServers(servers, f.userNumber, f.password),
+      }
+    })
+  }, [servers, editingDevice])
 
   async function loadDevices() {
     setLoading(true)
@@ -285,20 +367,46 @@ export default function Dashboard() {
     setEditingDevice(null)
     setDeviceForm({
       userNumber: '',
+      password: '',
       paymentStatus: false,
-      lists: [],
+      lists: buildDefaultListsFromServers(servers, '', ''),
       createdAt: '',
       expiresAt: '',
       planDays: String(defaultPlanDays),
     })
   }
 
+  function applyRenewalPlan() {
+    const newExpiryDate = addPlanDaysToExpiryDate(
+      deviceForm.expiresAt,
+      deviceForm.planDays
+    )
+    if (!newExpiryDate) {
+      toast.error('Selecione um plano válido.')
+      return
+    }
+    setDeviceForm((f) => ({
+      ...f,
+      expiresAt: dateToInputDate(newExpiryDate),
+    }))
+    toast.success(
+      `Período adicionado. Novo vencimento: ${newExpiryDate.toLocaleDateString('pt-BR')}`
+    )
+  }
+
   async function saveDevice(e) {
     e.preventDefault()
     setSavingDevice(true)
     try {
+      const userNumber = String(deviceForm.userNumber || '').trim()
+      const password = String(deviceForm.password || '').trim()
+      const listsToSave =
+        (deviceForm.lists || []).length > 0
+          ? deviceForm.lists
+          : buildDefaultListsFromServers(servers, userNumber, password)
+
       const listsWithUrl = await Promise.all(
-        (deviceForm.lists || []).map(async (item) => {
+        listsToSave.map(async (item) => {
           const server = servers.find((s) => s.id === item.serverId)
           const dns = server?.dns || ''
           const complement = server?.complement || ''
@@ -326,12 +434,13 @@ export default function Dashboard() {
       if (editingDevice) {
         const createdAt = inputDateToTimestamp(deviceForm.createdAt)
         const expiresAt = inputDateToTimestamp(deviceForm.expiresAt)
+        const planDays = Number(deviceForm.planDays || defaultPlanDays)
         if (createdAt) payload.createdAt = createdAt
         if (expiresAt) payload.expiresAt = expiresAt
+        if (Number.isFinite(planDays) && planDays > 0) payload.planDays = planDays
         await updateDoc(doc(db, 'devices', editingDevice.id), payload)
         toast.success('Dispositivo atualizado')
       } else {
-        const userNumber = String(deviceForm.userNumber || '').trim()
         const planDays = Number(deviceForm.planDays || defaultPlanDays)
         const expiresAtDate = getExpiryDateByPlanDays(planDays)
         if (!userNumber) {
@@ -577,6 +686,9 @@ export default function Dashboard() {
     JSON.stringify(normalizeAndroidAppConfig(androidAppConfigForm)) !==
     JSON.stringify(normalizeAndroidAppConfig(savedAndroidAppConfig))
   const planExpiryPreview = getExpiryDateByPlanDays(deviceForm.planDays)
+  const renewalExpiryPreview = editingDevice
+    ? addPlanDaysToExpiryDate(deviceForm.expiresAt, deviceForm.planDays)
+    : null
 
   return (
     <div className="min-h-screen bg-gradient-to-br from-gray-50 via-orange-50/10 to-red-50/10">
@@ -648,19 +760,39 @@ export default function Dashboard() {
                   </h2>
                   <form onSubmit={saveDevice} className="space-y-6">
                     {!editingDevice && (
-                      <div>
-                        <label className="mb-1 block text-sm font-medium text-gray-700">
-                          Número do Usuário
-                        </label>
-                        <input
-                          type="text"
-                          value={deviceForm.userNumber}
-                          onChange={(e) =>
-                            setDeviceForm((f) => ({ ...f, userNumber: e.target.value }))
-                          }
-                          className="input-field"
-                          placeholder="123456"
-                        />
+                      <div className="grid gap-4 sm:grid-cols-2">
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-gray-700">
+                            Número do Usuário
+                          </label>
+                          <input
+                            type="text"
+                            value={deviceForm.userNumber}
+                            onChange={(e) =>
+                              setDeviceForm((f) =>
+                                syncNewDeviceListCredentials(f, e.target.value, f.password)
+                              )
+                            }
+                            className="input-field"
+                            placeholder="123456"
+                          />
+                        </div>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-gray-700">
+                            Senha
+                          </label>
+                          <input
+                            type="text"
+                            value={deviceForm.password}
+                            onChange={(e) =>
+                              setDeviceForm((f) =>
+                                syncNewDeviceListCredentials(f, f.userNumber, e.target.value)
+                              )
+                            }
+                            className="input-field"
+                            placeholder="Senha do cliente"
+                          />
+                        </div>
                       </div>
                     )}
                     {!editingDevice && (
@@ -710,40 +842,98 @@ export default function Dashboard() {
                       </select>
                     </div>
                     {editingDevice && (
-                      <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="space-y-4 rounded-lg border border-orange-200 bg-white/60 p-4">
                         <div>
-                          <label className="mb-1 block text-sm font-medium text-gray-700">
-                            Data de criação
-                          </label>
-                          <input
-                            type="date"
-                            value={deviceForm.createdAt || ''}
-                            onChange={(e) =>
-                              setDeviceForm((f) => ({ ...f, createdAt: e.target.value }))
-                            }
-                            className="input-field"
-                          />
+                          <h3 className="text-base font-medium text-gray-900">Renovar vencimento</h3>
+                          <p className="mt-1 text-sm text-gray-500">
+                            Selecione um plano para somar dias à data de vencimento atual.
+                            Se já estiver vencido, a renovação começa a partir de hoje.
+                          </p>
                         </div>
                         <div>
                           <label className="mb-1 block text-sm font-medium text-gray-700">
-                            Data de vencimento
+                            Plano de renovação
                           </label>
-                          <input
-                            type="date"
-                            value={deviceForm.expiresAt || ''}
+                          <select
+                            value={deviceForm.planDays}
                             onChange={(e) =>
-                              setDeviceForm((f) => ({ ...f, expiresAt: e.target.value }))
+                              setDeviceForm((f) => ({ ...f, planDays: e.target.value }))
                             }
                             className="input-field"
-                          />
+                          >
+                            {planOptions.map((plan) => (
+                              <option key={plan.value} value={String(plan.value)}>
+                                {plan.label}
+                              </option>
+                            ))}
+                          </select>
+                          <p className="mt-2 text-xs text-gray-500">
+                            Vencimento atual:{' '}
+                            <span className="font-medium text-gray-700">
+                              {deviceForm.expiresAt
+                                ? new Date(`${deviceForm.expiresAt}T00:00:00`).toLocaleDateString(
+                                    'pt-BR'
+                                  )
+                                : '-'}
+                            </span>
+                            {' · '}
+                            Novo vencimento previsto:{' '}
+                            <span className="font-medium text-gray-700">
+                              {renewalExpiryPreview
+                                ? renewalExpiryPreview.toLocaleDateString('pt-BR')
+                                : '-'}
+                            </span>
+                          </p>
+                        </div>
+                        <button
+                          type="button"
+                          onClick={applyRenewalPlan}
+                          className="btn-secondary w-full sm:w-auto"
+                        >
+                          Adicionar período do plano
+                        </button>
+
+                        <div className="border-t border-gray-200 pt-4">
+                          <h3 className="mb-3 text-base font-medium text-gray-900">
+                            Ajuste manual de datas
+                          </h3>
+                          <div className="grid gap-4 sm:grid-cols-2">
+                            <div>
+                              <label className="mb-1 block text-sm font-medium text-gray-700">
+                                Data de criação
+                              </label>
+                              <input
+                                type="date"
+                                value={deviceForm.createdAt || ''}
+                                onChange={(e) =>
+                                  setDeviceForm((f) => ({ ...f, createdAt: e.target.value }))
+                                }
+                                className="input-field"
+                              />
+                            </div>
+                            <div>
+                              <label className="mb-1 block text-sm font-medium text-gray-700">
+                                Data de vencimento
+                              </label>
+                              <input
+                                type="date"
+                                value={deviceForm.expiresAt || ''}
+                                onChange={(e) =>
+                                  setDeviceForm((f) => ({ ...f, expiresAt: e.target.value }))
+                                }
+                                className="input-field"
+                              />
+                            </div>
+                          </div>
                         </div>
                       </div>
                     )}
                     <div className="space-y-4">
                       <h3 className="text-lg font-medium text-gray-900">Listas M3U</h3>
                       <p className="text-sm text-gray-500">
-                        Adicione listas ao dispositivo. Servidor, usuário e senha são
-                        preenchidos por lista.
+                        {editingDevice
+                          ? 'Adicione listas ao dispositivo. Servidor, usuário e senha são preenchidos por lista.'
+                          : 'Por padrão, são incluídas as 3 listas (Tropical Play TV 1, 2 e 3) com o número e a senha informados acima. Use "+ Adicionar lista" apenas se precisar incluir um 4º servidor ou mais.'}
                       </p>
                       {(deviceForm.lists || []).map((list, idx) => (
                         <div
@@ -830,7 +1020,14 @@ export default function Dashboard() {
                         onClick={() =>
                           setDeviceForm((f) => ({
                             ...f,
-                            lists: [...(f.lists || []), { serverId: '', username: '', password: '' }],
+                            lists: [
+                              ...(f.lists || []),
+                              {
+                                serverId: '',
+                                username: f.userNumber || '',
+                                password: f.password || '',
+                              },
+                            ],
                           }))
                         }
                         className="text-sm text-orange-600 hover:text-orange-800"
