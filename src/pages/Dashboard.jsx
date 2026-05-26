@@ -20,15 +20,15 @@ const tabDevices = 'devices'
 const tabLists = 'lists'
 const tabSupport = 'support'
 const tabAppUpdate = 'app_update'
-const defaultPlanDays = 7
+const defaultPlanValue = 'days:7'
 
 const planOptions = [
-  { value: 7, label: '7 dias (Semanal)' },
-  { value: 15, label: '15 dias (Quinzenal)' },
-  { value: 30, label: '30 dias (Mensal)' },
-  { value: 90, label: '90 dias (Trimestral)' },
-  { value: 180, label: '180 dias (Semestral)' },
-  { value: 365, label: '365 dias (Anual)' },
+  { value: 'days:7', label: '7 dias (Semanal)', unit: 'days', amount: 7, approxDays: 7 },
+  { value: 'days:15', label: '15 dias (Quinzenal)', unit: 'days', amount: 15, approxDays: 15 },
+  { value: 'months:1', label: '1 mês (Mensal)', unit: 'months', amount: 1, approxDays: 30 },
+  { value: 'months:3', label: '3 meses (Trimestral)', unit: 'months', amount: 3, approxDays: 90 },
+  { value: 'months:6', label: '6 meses (Semestral)', unit: 'months', amount: 6, approxDays: 180 },
+  { value: 'months:12', label: '12 meses (Anual)', unit: 'months', amount: 12, approxDays: 365 },
 ]
 
 const defaultSupportInfo = {
@@ -127,18 +127,50 @@ function dateToInputDate(date) {
   return `${year}-${month}-${day}`
 }
 
-function getExpiryDateByPlanDays(planDays) {
-  const days = Number(planDays)
-  if (!Number.isFinite(days) || days <= 0) return null
-  const date = new Date()
-  date.setHours(0, 0, 0, 0)
-  date.setDate(date.getDate() + days)
-  return date
+function normalizePlanValue(value) {
+  if (planOptions.some((plan) => plan.value === value)) return value
+
+  const legacyDays = Number(value)
+  if (!Number.isFinite(legacyDays)) return defaultPlanValue
+
+  if (legacyDays === 7) return 'days:7'
+  if (legacyDays === 15) return 'days:15'
+  if (legacyDays === 30) return 'months:1'
+  if (legacyDays === 90) return 'months:3'
+  if (legacyDays === 180) return 'months:6'
+  if (legacyDays === 365) return 'months:12'
+
+  return defaultPlanValue
 }
 
-function addPlanDaysToExpiryDate(currentExpiresAtInput, planDays) {
-  const days = Number(planDays)
-  if (!Number.isFinite(days) || days <= 0) return null
+function getPlanOption(value) {
+  const normalizedValue = normalizePlanValue(value)
+  return planOptions.find((plan) => plan.value === normalizedValue) || planOptions[0]
+}
+
+function addCalendarMonths(date, months) {
+  const originalDay = date.getDate()
+  const result = new Date(date)
+  result.setDate(1)
+  result.setMonth(result.getMonth() + months)
+
+  const lastDayOfTargetMonth = new Date(
+    result.getFullYear(),
+    result.getMonth() + 1,
+    0
+  ).getDate()
+
+  result.setDate(Math.min(originalDay, lastDayOfTargetMonth))
+  return result
+}
+
+function getExpiryDateByPlanDays(planValue) {
+  return addPlanDaysToExpiryDate('', planValue)
+}
+
+function addPlanDaysToExpiryDate(currentExpiresAtInput, planValue) {
+  const plan = getPlanOption(planValue)
+  if (!plan) return null
 
   const today = new Date()
   today.setHours(0, 0, 0, 0)
@@ -155,7 +187,11 @@ function addPlanDaysToExpiryDate(currentExpiresAtInput, planDays) {
   // Se já venceu, renova a partir de hoje; senão soma a partir da data de vencimento atual
   if (base < today) base = new Date(today)
 
-  base.setDate(base.getDate() + days)
+  if (plan.unit === 'months') {
+    return addCalendarMonths(base, plan.amount)
+  }
+
+  base.setDate(base.getDate() + plan.amount)
   return base
 }
 
@@ -215,9 +251,13 @@ export default function Dashboard() {
     lists: [],
     createdAt: '',
     expiresAt: '',
-    planDays: String(defaultPlanDays),
+    planDays: defaultPlanValue,
   })
+  const [showDeviceForm, setShowDeviceForm] = useState(false)
   const [savingDevice, setSavingDevice] = useState(false)
+  const [quickRenewDeviceId, setQuickRenewDeviceId] = useState(null)
+  const [quickRenewPlanDays, setQuickRenewPlanDays] = useState('months:1')
+  const [renewingDeviceId, setRenewingDeviceId] = useState(null)
 
   // Server form (Configurações)
   const [editingServer, setEditingServer] = useState(null)
@@ -345,12 +385,28 @@ export default function Dashboard() {
         String(l.name || '').toLowerCase().includes(search.toLowerCase())
       )
   )
+  const paidDevicesCount = filteredDevices.filter((d) => !!d.paymentStatus).length
+  const pendingDevicesCount = filteredDevices.length - paidDevicesCount
 
   async function handleLogout() {
     await signOut(auth)
   }
 
   // ---- Device handlers ----
+  function openNewDeviceForm() {
+    setEditingDevice(null)
+    setDeviceForm({
+      userNumber: '',
+      password: '',
+      paymentStatus: false,
+      lists: buildDefaultListsFromServers(servers, '', ''),
+      createdAt: '',
+      expiresAt: '',
+      planDays: defaultPlanValue,
+    })
+    setShowDeviceForm(true)
+  }
+
   function openEditDevice(device) {
     setEditingDevice(device)
     setDeviceForm({
@@ -359,8 +415,9 @@ export default function Dashboard() {
       lists: (device.lists || []).map((l) => ({ ...l })),
       createdAt: timestampToInputDate(device.createdAt),
       expiresAt: timestampToInputDate(device.expiresAt),
-      planDays: String(device.planDays || defaultPlanDays),
+      planDays: normalizePlanValue(device.planValue || device.planDays || defaultPlanValue),
     })
+    setShowDeviceForm(true)
   }
 
   function clearDeviceForm() {
@@ -372,8 +429,9 @@ export default function Dashboard() {
       lists: buildDefaultListsFromServers(servers, '', ''),
       createdAt: '',
       expiresAt: '',
-      planDays: String(defaultPlanDays),
+      planDays: defaultPlanValue,
     })
+    setShowDeviceForm(false)
   }
 
   function applyRenewalPlan() {
@@ -434,15 +492,17 @@ export default function Dashboard() {
       if (editingDevice) {
         const createdAt = inputDateToTimestamp(deviceForm.createdAt)
         const expiresAt = inputDateToTimestamp(deviceForm.expiresAt)
-        const planDays = Number(deviceForm.planDays || defaultPlanDays)
+        const plan = getPlanOption(deviceForm.planDays)
         if (createdAt) payload.createdAt = createdAt
         if (expiresAt) payload.expiresAt = expiresAt
-        if (Number.isFinite(planDays) && planDays > 0) payload.planDays = planDays
+        payload.planDays = plan.approxDays
+        payload.planValue = plan.value
+        payload.planLabel = plan.label
         await updateDoc(doc(db, 'devices', editingDevice.id), payload)
         toast.success('Dispositivo atualizado')
       } else {
-        const planDays = Number(deviceForm.planDays || defaultPlanDays)
-        const expiresAtDate = getExpiryDateByPlanDays(planDays)
+        const plan = getPlanOption(deviceForm.planDays)
+        const expiresAtDate = getExpiryDateByPlanDays(plan.value)
         if (!userNumber) {
           toast.error('Informe o número do usuário.')
           setSavingDevice(false)
@@ -455,7 +515,9 @@ export default function Dashboard() {
         }
         payload.createdAt = serverTimestamp()
         payload.expiresAt = Timestamp.fromDate(expiresAtDate)
-        payload.planDays = planDays
+        payload.planDays = plan.approxDays
+        payload.planValue = plan.value
+        payload.planLabel = plan.label
         await setDoc(doc(db, 'devices', userNumber), payload)
         toast.success('Dispositivo adicionado')
       }
@@ -494,6 +556,53 @@ export default function Dashboard() {
       toast.success(paid ? 'Marcado como pago' : 'Marcado como pendente')
     } catch {
       toast.error('Erro ao atualizar status')
+    }
+  }
+
+  async function quickRenewDevice(device) {
+    const newExpiryDate = addPlanDaysToExpiryDate(
+      timestampToInputDate(device.expiresAt),
+      quickRenewPlanDays
+    )
+    const plan = getPlanOption(quickRenewPlanDays)
+
+    if (!newExpiryDate || !plan) {
+      toast.error('Selecione um plano válido para renovar.')
+      return
+    }
+
+    setRenewingDeviceId(device.id)
+    try {
+      const expiresAt = Timestamp.fromDate(newExpiryDate)
+      await updateDoc(doc(db, 'devices', device.id), {
+        expiresAt,
+        planDays: plan.approxDays,
+        planValue: plan.value,
+        planLabel: plan.label,
+        updatedAt: serverTimestamp(),
+      })
+      setDevices((prev) =>
+        prev.map((d) =>
+          d.id === device.id
+            ? {
+                ...d,
+                expiresAt,
+                planDays: plan.approxDays,
+                planValue: plan.value,
+                planLabel: plan.label,
+              }
+            : d
+        )
+      )
+      setQuickRenewDeviceId(null)
+      toast.success(
+        `Renovado até ${newExpiryDate.toLocaleDateString('pt-BR')}`
+      )
+    } catch (err) {
+      console.error('Erro ao renovar dispositivo:', err)
+      toast.error('Não foi possível renovar este dispositivo')
+    } finally {
+      setRenewingDeviceId(null)
     }
   }
 
@@ -753,8 +862,20 @@ export default function Dashboard() {
           <div className="mobile-container">
             {tab === tabDevices && (
               <div className="space-y-8">
-                {/* Form add/edit device */}
-                <div className="glass-card mobile-card bg-gradient-to-r from-orange-50 to-red-50">
+                {!showDeviceForm && (
+                  <div className="flex justify-end">
+                    <button
+                      type="button"
+                      onClick={openNewDeviceForm}
+                      className="btn-primary w-full sm:w-auto"
+                    >
+                      + Adicionar dispositivo
+                    </button>
+                  </div>
+                )}
+
+                {showDeviceForm && (
+                  <div className="glass-card mobile-card bg-gradient-to-r from-orange-50 to-red-50">
                   <h2 className="mb-6 text-xl font-semibold text-gray-900">
                     {editingDevice ? 'Editar Dispositivo' : 'Adicionar Novo Dispositivo'}
                   </h2>
@@ -1036,7 +1157,7 @@ export default function Dashboard() {
                       </button>
                     </div>
                     <div className="flex flex-col gap-3 sm:flex-row sm:justify-end sm:space-x-3">
-                      {editingDevice && (
+                      {showDeviceForm && (
                         <button
                           type="button"
                           onClick={clearDeviceForm}
@@ -1054,7 +1175,8 @@ export default function Dashboard() {
                       </button>
                     </div>
                   </form>
-                </div>
+                  </div>
+                )}
 
                 {/* Device list */}
                 <div className="space-y-4">
@@ -1066,11 +1188,17 @@ export default function Dashboard() {
                       onChange={(e) => setSearch(e.target.value)}
                       className="input-field flex-1"
                     />
-                    <span className="text-sm text-gray-500">
-                      {filteredDevices.length}{' '}
-                      {filteredDevices.length === 1 ? 'dispositivo' : 'dispositivos'} encontrado
-                      {filteredDevices.length !== 1 ? 's' : ''}
-                    </span>
+                    <div className="flex flex-wrap gap-2 text-sm">
+                      <span className="rounded-full bg-gray-100 px-3 py-1 text-gray-700">
+                        Total: {filteredDevices.length}
+                      </span>
+                      <span className="rounded-full bg-green-100 px-3 py-1 text-green-700">
+                        Pagos: {paidDevicesCount}
+                      </span>
+                      <span className="rounded-full bg-orange-100 px-3 py-1 text-orange-700">
+                        Pendentes: {pendingDevicesCount}
+                      </span>
+                    </div>
                   </div>
                   <div className="table-container">
                     <div className="overflow-x-auto scrollbar-hide">
@@ -1154,21 +1282,76 @@ export default function Dashboard() {
                                     <option value="true">Pago</option>
                                   </select>
                                 </td>
-                                <td className="table-cell space-x-3 text-right">
-                                  <button
-                                    type="button"
-                                    onClick={() => openEditDevice(device)}
-                                    className="text-orange-600 transition-colors duration-200 hover:text-orange-900"
-                                  >
-                                    Editar
-                                  </button>
-                                  <button
-                                    type="button"
-                                    onClick={() => deleteDevice(device.id)}
-                                    className="text-red-600 transition-colors duration-200 hover:text-red-900"
-                                  >
-                                    Excluir
-                                  </button>
+                                <td className="table-cell text-right">
+                                  <div className="flex flex-col items-end gap-2">
+                                    <div className="space-x-3">
+                                      <button
+                                        type="button"
+                                        onClick={() => {
+                                          setQuickRenewDeviceId(device.id)
+                                          setQuickRenewPlanDays(
+                                            normalizePlanValue(
+                                              device.planValue || device.planDays || 'months:1'
+                                            )
+                                          )
+                                        }}
+                                        className="text-green-600 transition-colors duration-200 hover:text-green-900"
+                                      >
+                                        Renovar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => openEditDevice(device)}
+                                        className="text-orange-600 transition-colors duration-200 hover:text-orange-900"
+                                      >
+                                        Editar
+                                      </button>
+                                      <button
+                                        type="button"
+                                        onClick={() => deleteDevice(device.id)}
+                                        className="text-red-600 transition-colors duration-200 hover:text-red-900"
+                                      >
+                                        Excluir
+                                      </button>
+                                    </div>
+                                    {quickRenewDeviceId === device.id && (
+                                      <div className="flex w-full flex-col gap-2 rounded-lg border border-green-200 bg-green-50/70 p-2 text-left sm:w-64">
+                                        <label className="text-xs font-medium text-gray-700">
+                                          Plano para renovar
+                                        </label>
+                                        <select
+                                          value={quickRenewPlanDays}
+                                          onChange={(e) => setQuickRenewPlanDays(e.target.value)}
+                                          className="input-field py-2 text-sm"
+                                        >
+                                          {planOptions.map((plan) => (
+                                            <option key={plan.value} value={String(plan.value)}>
+                                              {plan.label}
+                                            </option>
+                                          ))}
+                                        </select>
+                                        <div className="flex gap-2">
+                                          <button
+                                            type="button"
+                                            disabled={renewingDeviceId === device.id}
+                                            onClick={() => quickRenewDevice(device)}
+                                            className="btn-primary flex-1 py-2 text-sm"
+                                          >
+                                            {renewingDeviceId === device.id
+                                              ? 'Renovando...'
+                                              : 'Confirmar'}
+                                          </button>
+                                          <button
+                                            type="button"
+                                            onClick={() => setQuickRenewDeviceId(null)}
+                                            className="btn-secondary flex-1 py-2 text-sm"
+                                          >
+                                            Cancelar
+                                          </button>
+                                        </div>
+                                      </div>
+                                    )}
+                                  </div>
                                 </td>
                               </tr>
                             ))
