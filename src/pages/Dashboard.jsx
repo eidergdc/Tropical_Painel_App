@@ -247,6 +247,7 @@ export default function Dashboard() {
   const [deviceForm, setDeviceForm] = useState({
     userNumber: '',
     password: '',
+    email: '',
     paymentStatus: false,
     lists: [],
     createdAt: '',
@@ -381,6 +382,7 @@ export default function Dashboard() {
   const filteredDevices = devices.filter(
     (d) =>
       String(d.userNumber || '').toLowerCase().includes(search.toLowerCase()) ||
+      String(d.email || '').toLowerCase().includes(search.toLowerCase()) ||
       (d.lists || []).some((l) =>
         String(l.name || '').toLowerCase().includes(search.toLowerCase())
       )
@@ -398,6 +400,7 @@ export default function Dashboard() {
     setDeviceForm({
       userNumber: '',
       password: '',
+      email: '',
       paymentStatus: false,
       lists: buildDefaultListsFromServers(servers, '', ''),
       createdAt: '',
@@ -411,6 +414,8 @@ export default function Dashboard() {
     setEditingDevice(device)
     setDeviceForm({
       userNumber: device.userNumber || '',
+      password: '',
+      email: device.email || '',
       paymentStatus: device.paymentStatus ?? false,
       lists: (device.lists || []).map((l) => ({ ...l })),
       createdAt: timestampToInputDate(device.createdAt),
@@ -425,6 +430,7 @@ export default function Dashboard() {
     setDeviceForm({
       userNumber: '',
       password: '',
+      email: '',
       paymentStatus: false,
       lists: buildDefaultListsFromServers(servers, '', ''),
       createdAt: '',
@@ -484,6 +490,7 @@ export default function Dashboard() {
 
       const payload = {
         userNumber: deviceForm.userNumber,
+        email: String(deviceForm.email || '').trim(),
         paymentStatus: !!deviceForm.paymentStatus,
         lists: listsWithUrl,
         updatedAt: serverTimestamp(),
@@ -881,7 +888,7 @@ export default function Dashboard() {
                   </h2>
                   <form onSubmit={saveDevice} className="space-y-6">
                     {!editingDevice && (
-                      <div className="grid gap-4 sm:grid-cols-2">
+                      <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
                         <div>
                           <label className="mb-1 block text-sm font-medium text-gray-700">
                             Número do Usuário
@@ -914,6 +921,36 @@ export default function Dashboard() {
                             placeholder="Senha do cliente"
                           />
                         </div>
+                        <div>
+                          <label className="mb-1 block text-sm font-medium text-gray-700">
+                            E-mail
+                          </label>
+                          <input
+                            type="email"
+                            value={deviceForm.email}
+                            onChange={(e) =>
+                              setDeviceForm((f) => ({ ...f, email: e.target.value }))
+                            }
+                            className="input-field"
+                            placeholder="cliente@email.com"
+                          />
+                        </div>
+                      </div>
+                    )}
+                    {editingDevice && (
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          E-mail
+                        </label>
+                        <input
+                          type="email"
+                          value={deviceForm.email}
+                          onChange={(e) =>
+                            setDeviceForm((f) => ({ ...f, email: e.target.value }))
+                          }
+                          className="input-field"
+                          placeholder="cliente@email.com"
+                        />
                       </div>
                     )}
                     {!editingDevice && (
@@ -1183,7 +1220,7 @@ export default function Dashboard() {
                   <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:space-x-4">
                     <input
                       type="text"
-                      placeholder="Pesquisar por número de usuário ou nome da lista..."
+                      placeholder="Pesquisar por número de usuário, e-mail ou nome da lista..."
                       value={search}
                       onChange={(e) => setSearch(e.target.value)}
                       className="input-field flex-1"
@@ -1242,7 +1279,14 @@ export default function Dashboard() {
                             filteredDevices.map((device) => (
                               <tr key={device.id} className="table-row">
                                 <td className="table-cell font-medium text-gray-900">
-                                  {device.userNumber}
+                                  <div>
+                                    <div>{device.userNumber}</div>
+                                    {device.email && (
+                                      <div className="mt-1 text-xs font-normal text-gray-500">
+                                        {device.email}
+                                      </div>
+                                    )}
+                                  </div>
                                 </td>
                                 <td className="table-cell">
                                   <div className="space-y-1">
