@@ -12,8 +12,9 @@ import {
   Timestamp,
   serverTimestamp,
 } from 'firebase/firestore'
+import { getDownloadURL, ref, uploadBytes } from 'firebase/storage'
 import toast from 'react-hot-toast'
-import { auth, db } from '../firebase'
+import { auth, db, storage } from '../firebase'
 import { updateServerAndPropagateToDevices, buildListUrl } from '../lib/updateServerAndDevices'
 
 const tabDevices = 'devices'
@@ -283,6 +284,7 @@ export default function Dashboard() {
   const [loadingAppConfig, setLoadingAppConfig] = useState(true)
   const [savingAppConfig, setSavingAppConfig] = useState(false)
   const [savingAndroidAppConfig, setSavingAndroidAppConfig] = useState(false)
+  const [androidUpdateFile, setAndroidUpdateFile] = useState(null)
 
   const user = auth.currentUser
 
@@ -751,7 +753,7 @@ export default function Dashboard() {
     setSavingAndroidAppConfig(true)
     try {
       const versionCode = Number(androidAppConfigForm.version_code)
-      const updateUrl = String(androidAppConfigForm.update_url || '').trim()
+      let updateUrl = String(androidAppConfigForm.update_url || '').trim()
 
       if (!Number.isFinite(versionCode) || versionCode <= 0) {
         toast.error('Código da versão Android deve ser um número válido.')
@@ -759,8 +761,18 @@ export default function Dashboard() {
         return
       }
 
+      if (androidUpdateFile) {
+        const safeFileName = androidUpdateFile.name.replace(/[^a-zA-Z0-9._-]/g, '-')
+        const fileRef = ref(
+          storage,
+          `android-updates/${Date.now()}-${safeFileName}`
+        )
+        await uploadBytes(fileRef, androidUpdateFile)
+        updateUrl = await getDownloadURL(fileRef)
+      }
+
       if (!updateUrl) {
-        toast.error('Link de atualização Android é obrigatório.')
+        toast.error('Informe um link de atualização Android ou selecione um arquivo.')
         setSavingAndroidAppConfig(false)
         return
       }
@@ -779,6 +791,7 @@ export default function Dashboard() {
       const normalized = normalizeAndroidAppConfig(payload)
       setAndroidAppConfigForm(normalized)
       setSavedAndroidAppConfig(normalized)
+      setAndroidUpdateFile(null)
       toast.success('Configuração de atualização Android salva com sucesso')
     } catch (err) {
       console.error('Erro ao salvar configuração Android:', err)
@@ -1992,8 +2005,34 @@ export default function Dashboard() {
                           }
                           className="input-field"
                           placeholder="https://seusite.com/app.apk"
-                          required
                         />
+                        <p className="mt-1 text-xs text-gray-500">
+                          Você pode informar um link manualmente ou subir um arquivo APK abaixo.
+                        </p>
+                      </div>
+
+                      <div>
+                        <label className="mb-1 block text-sm font-medium text-gray-700">
+                          Arquivo de atualização (APK)
+                        </label>
+                        <input
+                          type="file"
+                          accept=".apk,application/vnd.android.package-archive"
+                          onChange={(e) =>
+                            setAndroidUpdateFile(e.target.files?.[0] || null)
+                          }
+                          className="block w-full cursor-pointer rounded-lg border border-gray-300 bg-white text-sm text-gray-700 file:mr-4 file:border-0 file:bg-orange-600 file:px-4 file:py-3 file:text-sm file:font-semibold file:text-white hover:file:bg-orange-700 focus:border-orange-500 focus:outline-none focus:ring-2 focus:ring-orange-500/20"
+                        />
+                        {androidUpdateFile ? (
+                          <p className="mt-2 text-xs text-orange-700">
+                            Ao salvar, este arquivo será enviado e o link Android será atualizado:{' '}
+                            <span className="font-medium">{androidUpdateFile.name}</span>
+                          </p>
+                        ) : (
+                          <p className="mt-2 text-xs text-gray-500">
+                            Selecione um APK para gerar automaticamente o link de atualização.
+                          </p>
+                        )}
                       </div>
 
                       <div className="flex justify-end">
